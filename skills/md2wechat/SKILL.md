@@ -203,7 +203,12 @@ Before WeChat article draft creation through `convert`:
 
 In the WeChat `convert` flow, Markdown images are uploaded or replaced only during `--upload` or `--draft`, not during plain conversion or preview.
 
+API-mode `convert --upload` / `--draft` journals every side effect in an append-only saga (operation id, input digest, remote media/draft id, compensation). Rerunning the same command automatically reuses verified uploads and drafts; do not assume duplicates were created.
+
 ## Failure Handling
+
+- Interrupted, timed-out, or failed `convert --upload` / `--draft`: read the `saga` block in the JSON response (`status`: `completed` / `partial` / `unknown`) and follow its `manual_actions`, or run `md2wechat saga status <operation_id> --json`. Deterministic failures are safely retried by rerunning the command or `saga resume <id>`.
+- `unknown` means the request may have reached WeChat but the response was lost. Run `md2wechat saga reconcile <id>` (window query plus draft content fingerprint) before any retry; never re-upload or re-create blindly. If reconcile stays `unknown`, follow the listed compensation/manual checklist instead of retrying.
 
 - Missing or invalid config: run `doctor --json` and `config show --format json`; report `data.overall` plus the blocking `data.readiness.*` item.
 - Invalid layout syntax: run `layout validate`, inspect the failing module with `layout show`, fix the generated artifact, then validate again.

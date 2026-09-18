@@ -9,14 +9,30 @@ import (
 	"github.com/geekjourneyx/md2wechat-skill/internal/image"
 )
 
+// AssetStepHook optionally wraps the remote effect of one asset upload.
+// Implementations (e.g. the saga journal) make the per-asset effect
+// idempotent across retries. The hook MUST invoke work exactly once when the
+// step actually executes, and MUST return the recorded effect without calling
+// work when the step was already completed in a previous run.
+type AssetStepHook interface {
+	RunAssetStep(asset AssetRef, work func() (mediaID, publicURL string, err error)) (mediaID, publicURL string, err error)
+}
+
 // AssetPipeline isolates publish-time asset resolution, upload, and HTML replacement.
 type AssetPipeline struct {
 	processor AssetProcessor
+	stepHook  AssetStepHook
 }
 
 // NewAssetPipeline creates a publish asset pipeline.
 func NewAssetPipeline(processor AssetProcessor) *AssetPipeline {
 	return &AssetPipeline{processor: processor}
+}
+
+// WithAssetStepHook installs an idempotency hook around individual uploads.
+func (p *AssetPipeline) WithAssetStepHook(hook AssetStepHook) *AssetPipeline {
+	p.stepHook = hook
+	return p
 }
 
 // ProcessInput is the normalized asset-processing request.
@@ -97,25 +113,17 @@ func (p *AssetPipeline) Process(input *ProcessInput) (*ProcessOutput, error) {
 
 	var failed []string
 	for i, asset := range output.Assets {
-		var uploadResult *image.UploadResult
-		var err error
+		current := asset
+		work := func() (string, string, error) {
+			return p.uploadOne(current)
+		}
 
-		switch asset.Kind {
-		case AssetKindLocal:
-			uploadResult, err = p.processor.UploadLocalImage(asset.ResolvedSource)
-		case AssetKindRemote:
-			uploadResult, err = p.processor.DownloadAndUpload(asset.Source)
-		case AssetKindAI:
-			var genResult *image.GenerateAndUploadResult
-			genResult, err = p.processor.GenerateAndUpload(asset.Prompt)
-			if err == nil {
-				uploadResult = &image.UploadResult{
-					MediaID:   genResult.MediaID,
-					WechatURL: genResult.WechatURL,
-				}
-			}
-		default:
-			err = fmt.Errorf("unsupported asset kind: %s", asset.Kind)
+		var mediaID, publicURL string
+		var err error
+		if p.stepHook != nil {
+			mediaID, publicURL, err = p.stepHook.RunAssetStep(current, work)
+		} else {
+			mediaID, publicURL, err = work()
 		}
 
 		if err != nil {
@@ -123,8 +131,8 @@ func (p *AssetPipeline) Process(input *ProcessInput) (*ProcessOutput, error) {
 			continue
 		}
 
-		output.Assets[i].MediaID = uploadResult.MediaID
-		output.Assets[i].PublicURL = uploadResult.WechatURL
+		output.Assets[i].MediaID = mediaID
+		output.Assets[i].PublicURL = publicURL
 	}
 
 	output.HTML = ReplaceAssetPlaceholders(output.HTML, output.Assets)
@@ -133,4 +141,34 @@ func (p *AssetPipeline) Process(input *ProcessInput) (*ProcessOutput, error) {
 	}
 
 	return output, nil
+}
+
+// uploadOne performs the single remote effect for one resolved asset.
+func (p *AssetPipeline) uploadOne(asset AssetRef) (mediaID, publicURL string, err error) {
+	var uploadResult *image.UploadResult
+
+	switch asset.Kind {
+	case AssetKindLocal:
+		uploadResult, err = p.processor.UploadLocalImage(asset.ResolvedSource)
+	case AssetKindRemote:
+		uploadResult, err = p.processor.DownloadAndUpload(asset.Source)
+	case AssetKindAI:
+		var genResult *image.GenerateAndUploadResult
+		genResult, err = p.processor.GenerateAndUpload(asset.Prompt)
+		if err == nil {
+			uploadResult = &image.UploadResult{
+				MediaID:   genResult.MediaID,
+				WechatURL: genResult.WechatURL,
+			}
+		}
+	default:
+		err = fmt.Errorf("unsupported asset kind: %s", asset.Kind)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if uploadResult == nil {
+		return "", "", fmt.Errorf("asset %d upload returned no result", asset.Index)
+	}
+	return uploadResult.MediaID, uploadResult.WechatURL, nil
 }

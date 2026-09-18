@@ -254,8 +254,20 @@ md2wechat layout validate --file article.md --json
 | `upload_image` | 上传图片到微信素材库 |
 | `create_image_post` | 创建微信图片消息（小绿书/newspic） |
 | `sync prepare` | 本地准备跨平台正文，等待宿主创建和核验草稿 |
+| `saga list` / `saga status` / `saga resume` / `saga reconcile` | 查询与恢复中断的上传/建稿操作，防止重复上传、重复建稿 |
 | `config wechat-accounts` | 查看本地多公众号账号配置 |
 | `doctor` | 本地配置体检 |
+
+---
+
+## 崩溃恢复（saga）
+
+`convert --upload` / `--draft` 的每个远端副作用（素材上传、封面上传、建稿）都会写入 append-only journal（默认 `~/.config/md2wechat/saga/`）。CLI 崩溃、超时后**重跑同一命令会自动续跑**：已确认的素材/草稿直接复用，不会重复上传或重复建稿。
+
+- 普通重试：重新执行原 `convert` 命令即可；也可显式 `md2wechat saga resume <operation_id>`。
+- 响应丢失（请求可能已到微信）：步骤进入 `unknown`，先执行 `md2wechat saga reconcile <operation_id>`，CLI 会按时间窗查询素材库、按内容指纹比对草稿，再决定复用或安全重试。
+- 状态查询：`md2wechat saga list`、`md2wechat saga status [operation_id]`；状态为 `completed` / `partial` / `unknown`，并附人工处理清单。
+- `--mode ai` 不产生远端副作用，不写 journal。可用环境变量 `MD2WECHAT_SAGA=off` 关闭、`MD2WECHAT_SAGA_DIR` 改目录，`convert --operation-id <id>` 固定幂等范围。
 
 ---
 

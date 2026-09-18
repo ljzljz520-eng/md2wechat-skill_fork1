@@ -839,6 +839,20 @@ md2wechat convert article.md --upload --draft --cover cover.png --json
 
 头条不能保留多级标题；特殊字符须在保存后逐字符核对，不能从一个字符丢失推导整类字符禁用。无法保留内容时停止该目标，不擅自删改原稿。详见 [多平台草稿](SYNC.md)。
 
+### Q16.2：转换中途崩溃/超时，重跑会不会重复上传素材、重复建稿？
+
+不会。api 模式带 `--upload` 或 `--draft` 时，每个素材上传、封面上传和建稿动作都会写入 append-only saga journal（`~/.config/md2wechat/saga/`）。直接重跑原命令即可自动续跑：已确认的素材和草稿从 journal 复用，不会再发一次请求。
+
+如果失败是超时、连接中断这类**响应可能已到微信**的错误，对应步骤会标记为 `unknown`，此时不要盲目重发：
+
+```bash
+md2wechat saga status <operation_id> --json     # 查看状态与 manual_actions
+md2wechat saga reconcile <operation_id>        # 按时间窗/内容指纹向微信查询对账
+md2wechat saga resume <operation_id>           # 对账或修复后续跑
+```
+
+状态含义：`completed`（全部步骤已确认）、`partial`（有已完成步骤，其余失败或待执行）、`unknown`（存在响应丢失、需对账或人工确认）。journal 只存在本地、不含凭证；可用 `MD2WECHAT_SAGA_DIR` 改目录、`MD2WECHAT_SAGA=off` 关闭。
+
 ---
 
 ### Q17：`access_token expired` 是不是凭证坏了？

@@ -58,11 +58,12 @@ type ConvertOutput struct {
 
 // Service coordinates the publish pipeline without binding it to the CLI layer.
 type Service struct {
-	log         *zap.Logger
-	converter   MarkdownConverter
-	assets      *AssetPipeline
-	drafts      DraftCreator
-	uploadCover CoverUploader
+	log           *zap.Logger
+	converter     MarkdownConverter
+	assets        *AssetPipeline
+	drafts        DraftCreator
+	uploadCover   CoverUploader
+	assetStepHook AssetStepHook
 }
 
 // NewService creates a publish pipeline service.
@@ -75,6 +76,31 @@ func NewService(log *zap.Logger, conv MarkdownConverter, assets AssetProcessor, 
 		uploadCover: uploadCover,
 	}
 }
+
+// SetAssetStepHook installs an idempotency hook (e.g. a saga journal) around
+// individual asset uploads. It does not change behavior when hook is nil.
+func (s *Service) SetAssetStepHook(hook AssetStepHook) {
+	s.assetStepHook = hook
+	if s.assets != nil {
+		s.assets.WithAssetStepHook(hook)
+	}
+}
+
+// SetDraftCreator overrides the draft adapter (used by idempotency wrappers).
+func (s *Service) SetDraftCreator(creator DraftCreator) {
+	s.drafts = creator
+}
+
+// SetCoverUploader overrides the cover uploader (used by idempotency wrappers).
+func (s *Service) SetCoverUploader(uploader CoverUploader) {
+	s.uploadCover = uploader
+}
+
+// DraftCreator exposes the configured draft adapter for wrapping.
+func (s *Service) DraftCreator() DraftCreator { return s.drafts }
+
+// CoverUploader exposes the configured cover uploader for wrapping.
+func (s *Service) CoverUploader() CoverUploader { return s.uploadCover }
 
 // Convert executes the normalized publish pipeline.
 func (s *Service) Convert(input *ConvertInput) (*ConvertOutput, error) {

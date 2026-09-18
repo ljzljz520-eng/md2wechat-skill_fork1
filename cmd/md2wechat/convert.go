@@ -13,6 +13,7 @@ import (
 	"github.com/geekjourneyx/md2wechat-skill/internal/draft"
 	"github.com/geekjourneyx/md2wechat-skill/internal/image"
 	"github.com/geekjourneyx/md2wechat-skill/internal/publish"
+	"github.com/geekjourneyx/md2wechat-skill/internal/saga"
 	"github.com/geekjourneyx/md2wechat-skill/internal/wechat"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -91,6 +92,7 @@ var (
 	convertTitle          string
 	convertAuthor         string
 	convertDigest         string
+	convertOperationID    string
 )
 
 func init() {
@@ -111,6 +113,7 @@ func init() {
 	convertCmd.Flags().StringVar(&convertTitle, "title", "", "Override article title (max 32 characters)")
 	convertCmd.Flags().StringVar(&convertAuthor, "author", "", "Override article author (max 16 characters)")
 	convertCmd.Flags().StringVar(&convertDigest, "digest", "", "Override article digest (max 128 characters)")
+	convertCmd.Flags().StringVar(&convertOperationID, "operation-id", "", "Explicit saga operation id (resume or start a new idempotency scope)")
 }
 
 // runConvert 执行转换
@@ -191,8 +194,24 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Side effects (material uploads, draft creation) are journaled by an
+	// append-only saga so interrupted runs resume without duplicates. AI mode
+	// and local-only runs stay unchanged.
+	var harness *sagaHarness
+	if convertMode == "api" && (convertUpload || convertDraft) && sagaEnabled() {
+		harness, err = newSagaHarnessForConvert(input, strings.TrimSpace(convertOperationID))
+		if err != nil {
+			return wrapCLIError(codeConvertFailed, err, fmt.Sprintf("init saga: %v", err))
+		}
+		harness.wrapService(service)
+		defer harness.Close()
+	}
+
 	output, err := service.Convert(input)
 	if err != nil {
+		if harness != nil {
+			return finishConvertWithSaga(harness, err)
+		}
 		return mapConvertServiceError(err)
 	}
 	result := output.Conversion
@@ -210,8 +229,16 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		zap.String("theme", result.Theme),
 		zap.Int("image_count", len(output.Artifact.Assets)))
 
+	var sagaReport *saga.Report
+	if harness != nil {
+		if _, err := harness.Finish(); err != nil {
+			return wrapCLIError(codeConvertFailed, err, fmt.Sprintf("finalize saga: %v", err))
+		}
+		sagaReport = harness.Report()
+	}
+
 	if jsonOutput {
-		responseSuccessWith(codeConvertCompleted, "Conversion completed", map[string]any{
+		data := map[string]any{
 			"mode":        string(result.Mode),
 			"theme":       result.Theme,
 			"html":        output.Artifact.HTML,
@@ -228,7 +255,11 @@ func runConvert(cmd *cobra.Command, args []string) error {
 			"draft_id":    output.Artifact.DraftMediaID,
 			"draft_url":   output.Artifact.DraftURL,
 			"cover_id":    output.Artifact.CoverMediaID,
-		})
+		}
+		if sagaReport != nil {
+			data["saga"] = sagaReport
+		}
+		responseSuccessWith(codeConvertCompleted, "Conversion completed", data)
 		return nil
 	}
 
@@ -236,8 +267,40 @@ func runConvert(cmd *cobra.Command, args []string) error {
 	if err := outputHTML(output.Artifact.HTML, "", convertPreview); err != nil {
 		return wrapCLIError(codeConvertFailed, err, err.Error())
 	}
+	if sagaReport != nil {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, saga.FormatReport(sagaReport))
+	}
 
 	return nil
+}
+
+// finishConvertWithSaga records the terminal saga state on a failed convert and
+// attaches the saga report (including the manual-action checklist) to the error
+// envelope so agents can choose reconcile/resume instead of a blind retry.
+func finishConvertWithSaga(harness *sagaHarness, cause error) error {
+	_, _ = harness.Finish()
+	mapped := mapConvertServiceError(cause)
+	if cliErr, ok := mapped.(*cliError); ok {
+		report := harness.Report()
+		if cliErr.Details == nil {
+			cliErr.Details = map[string]any{}
+		}
+		cliErr.Details["saga"] = report
+		if report != nil && len(report.ManualActions) > 0 && len(cliErr.NextActions) == 0 {
+			cliErr.NextActions = []string{
+				fmt.Sprintf("Run md2wechat saga reconcile %s to query WeChat before retrying.", report.OperationID),
+				fmt.Sprintf("After fixing deterministic failures, run md2wechat saga resume %s.", report.OperationID),
+			}
+		}
+	}
+	if !jsonOutput {
+		if report := harness.Report(); report != nil {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, saga.FormatReport(report))
+		}
+	}
+	return mapped
 }
 
 func applyEffectiveCommandTheme(cmd *cobra.Command, theme *string) {

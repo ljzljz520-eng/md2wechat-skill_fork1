@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added an append-only saga journal for `convert --upload` / `--draft` side effects. Every material upload and draft creation gets an operation ID, content digest, idempotency key, remote media/draft ID, compensation action, and verifiable postcondition under `~/.config/md2wechat/saga/` (override with `MD2WECHAT_SAGA_DIR`).
+- Added automatic crash-safe resume: interrupted or retried conversions replay verified steps from the journal instead of uploading materials or creating drafts again. Disable with `MD2WECHAT_SAGA=off`; pin one scope with `convert --operation-id`.
+- Added `saga list`, `saga status [id]`, `saga resume <id>`, and `saga reconcile <id>`. Reconcile queries WeChat within the attempt window and fingerprints draft content before retrying; reports return `completed` / `partial` / `unknown` with a manual-action checklist.
+
 ## [3.6.0] - 2026-09-12
 
 ### Added

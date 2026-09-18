@@ -11,6 +11,7 @@ import (
 	"github.com/geekjourneyx/md2wechat-skill/internal/image"
 	"github.com/geekjourneyx/md2wechat-skill/internal/layoutcatalog"
 	"github.com/geekjourneyx/md2wechat-skill/internal/promptcatalog"
+	"github.com/geekjourneyx/md2wechat-skill/internal/saga"
 	titlebuilder "github.com/geekjourneyx/md2wechat-skill/internal/title"
 	"github.com/spf13/cobra"
 )
@@ -448,6 +449,7 @@ func buildCapabilitiesData() (map[string]any, error) {
 		},
 		"layout": buildLayoutCapabilityData(),
 		"sync":   buildSyncDiscoveryCapabilityData(),
+		"saga":   buildSagaDiscoveryCapabilityData(),
 		"prompts": map[string]any{
 			"count":      len(allPrompts),
 			"kinds":      sortedPromptKinds(allPrompts),
@@ -467,6 +469,21 @@ func buildSyncDiscoveryCapabilityData() map[string]any {
 		"direct_publish":  false,
 		"response_codes":  []string{"SYNC_PREPARED", "SYNC_PREPARE_FAILED"},
 		"sop":             "md2wechat skills read md2wechat references/sync/workflow.md --json",
+	}
+}
+
+func buildSagaDiscoveryCapabilityData() map[string]any {
+	return map[string]any{
+		"available": true,
+		"commands":  []string{"saga list", "saga status", "saga resume", "saga reconcile"},
+		"auto_enabled": map[string]any{
+			"mode":            "api",
+			"requires_flags":  []string{"--upload or --draft"},
+			"disable_env":     sagaDisableEnv + "=off",
+			"journal_dir_env": sagaDirEnv,
+		},
+		"statuses":       []string{string(saga.OpStatusCompleted), string(saga.OpStatusPartial), string(saga.OpStatusUnknown)},
+		"response_codes": []string{"SAGA_LISTED", "SAGA_COMPLETED", codeSagaManualActionRequired},
 	}
 }
 

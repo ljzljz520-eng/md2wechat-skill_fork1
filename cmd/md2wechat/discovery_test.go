@@ -705,6 +705,7 @@ func TestBuildCapabilitiesDataDerivesCommandsFromRootManifest(t *testing.T) {
 		"capabilities",
 		"version",
 		"sync",
+		"saga",
 	} {
 		if !contains(commands, want) {
 			t.Fatalf("commands missing %q: %#v", want, commands)
@@ -982,6 +983,7 @@ func TestBuildCapabilitiesDataKeepsStableCommandOrderFromRootManifest(t *testing
 		"capabilities",
 		"version",
 		"sync",
+		"saga",
 	}
 	if len(commands) != len(want) {
 		t.Fatalf("commands length = %d, want %d: %#v", len(commands), len(want), commands)

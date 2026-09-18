@@ -421,6 +421,10 @@ image:
 | `MAX_IMAGE_SIZE` | `image.max_size_mb` |
 | `MD2WECHAT_THEMES_DIR` | `themes` 覆盖目录 |
 | `MD2WECHAT_WRITERS_DIR` | `writers` 覆盖目录 |
+| `MD2WECHAT_SAGA` | 无配置文件项；仅环境变量。设为 `off` / `0` / `false` / `no` 关闭上传/建稿副作用的 saga journal |
+| `MD2WECHAT_SAGA_DIR` | 无配置文件项；仅环境变量。saga journal 目录，默认 `~/.config/md2wechat/saga/` |
+
+`MD2WECHAT_SAGA` 和 `MD2WECHAT_SAGA_DIR` 只影响 api 模式 `convert --upload` / `--draft` 的本地崩溃恢复 journal，不出现在配置文件与 `config show` 输出中；journal 不记录任何凭证。journal 语义和 `saga list` / `status` / `resume` / `reconcile` 命令见 [FAQ：崩溃与重复副作用](FAQ.md)。
 
 图片生成相关命令还支持 `--model`，用于单次覆盖当前调用的图片模型。优先级顺序为：
 
